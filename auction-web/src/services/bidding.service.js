@@ -26,12 +26,21 @@ export const placeBid = async (productId, userId, bidAmount) => {
     if (isRejected) throw new Error('You have been rejected from bidding on this product');
 
     // 3. Rating validation
-    const ratingPoint = await reviewModel.calculateRatingPoint(userId);
+    const ratingPointObj = await reviewModel.calculateRatingPoint(userId);
+    const ratingPoint = ratingPointObj ? ratingPointObj.rating_point : 0;
     const userReviews = await reviewModel.getReviewsByUserId(userId);
-    if (userReviews.length === 0) {
-      if (!product.allow_unrated_bidder) throw new Error('Seller does not allow unrated bidders.');
-    } else if (ratingPoint.rating_point <= 0.8) {
-      throw new Error('Your rating point is not greater than 80%.');
+    const hasReviews = userReviews.length > 0;
+    
+    if (!hasReviews) {
+      if (!product.allow_unrated_bidder) {
+        throw new Error('This seller does not allow unrated bidders to bid on this product.');
+      }
+    } else if (ratingPoint < 0) {
+      throw new Error('You are not eligible to place bids due to your rating.');
+    } else if (ratingPoint === 0) {
+      throw new Error('You are not eligible to place bids due to your rating.');
+    } else if (ratingPoint <= 0.8) {
+      throw new Error('Your rating point is not greater than 80%. You cannot place bids.');
     }
 
     // 4. Timing validation
@@ -132,11 +141,23 @@ export const placeBid = async (productId, userId, bidAmount) => {
 export const rejectBidder = async (productId, bidderId, sellerId) => {
   await db.transaction(async (trx) => {
     const product = await trx('products').where('id', productId).forUpdate().first();
-    if (!product || product.seller_id !== sellerId) throw new Error('Unauthorized or product not found');
+    if (!product) throw new Error('Product not found');
+    if (product.seller_id !== sellerId) throw new Error('Only the seller can reject bidders');
+
+    const now = new Date();
+    const endDate = new Date(product.end_at);
+    if (product.is_sold !== null || endDate <= now || product.closed_at) {
+      throw new Error('Can only reject bidders for active auctions');
+    }
+
+    const autoBid = await trx('auto_bidding').where({ product_id: productId, bidder_id: bidderId }).first();
+    if (!autoBid) throw new Error('This bidder has not placed a bid on this product');
     
     await trx('rejected_bidders').insert({ product_id: productId, bidder_id: bidderId, seller_id: sellerId }).onConflict(['product_id', 'bidder_id']).ignore();
     await trx('bidding_history').where({ product_id: productId, bidder_id: bidderId }).del();
     await trx('auto_bidding').where({ product_id: productId, bidder_id: bidderId }).del();
+    
+    // ... rest of the recalculated logic ...
 
     const remainingBids = await trx('auto_bidding').where('product_id', productId).orderBy('max_price', 'desc');
     if (remainingBids.length === 0) {
@@ -148,20 +169,85 @@ export const rejectBidder = async (productId, bidderId, sellerId) => {
       await trx('products').where('id', productId).update({ highest_bidder_id: winner.bidder_id, current_price: newPrice, highest_max_price: winner.max_price });
     }
   });
+
+  // ========== SEND REJECTION EMAIL (outside transaction) ==========
+  (async () => {
+    try {
+      const [rejectedBidderInfo, productInfo, sellerInfo] = await Promise.all([
+        userModel.findById(bidderId),
+        productModel.findByProductId2(productId, null),
+        userModel.findById(sellerId)
+      ]);
+
+      if (rejectedBidderInfo?.email && productInfo) {
+        await sendMail({
+          to: rejectedBidderInfo.email,
+          subject: `Your bid has been rejected: ${productInfo.name}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                <h1 style="color: white; margin: 0;">Bid Rejected</h1>
+              </div>
+              <div style="background-color: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+                <p>Dear <strong>${rejectedBidderInfo.fullname}</strong>,</p>
+                <p>We regret to inform you that the seller has rejected your bid on the following product:</p>
+                <div style="background-color: white; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #dc3545;">
+                  <h3 style="margin: 0 0 10px 0; color: #333;">${productInfo.name}</h3>
+                  <p style="margin: 5px 0; color: #666;"><strong>Seller:</strong> ${sellerInfo ? sellerInfo.fullname : 'N/A'}</p>
+                </div>
+                <p style="color: #666;">This means you can no longer place bids on this specific product. Your previous bids on this product have been removed.</p>
+                <p style="color: #666;">You can still participate in other auctions on our platform.</p>
+                <div style="text-align: center; margin: 30px 0;">
+                  <a href="/products/category" style="display: inline-block; background: linear-gradient(135deg, #72AEC8 0%, #5a9ab8 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                    Browse Other Auctions
+                  </a>
+                </div>
+                <p style="color: #888; font-size: 13px;">If you believe this was done in error, please contact our support team.</p>
+              </div>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+              <p style="color: #888; font-size: 12px; text-align: center;">This is an automated message from Online Auction. Please do not reply to this email.</p>
+            </div>
+          `
+        });
+      }
+    } catch (error) {
+      console.error('Failed to send rejection email:', error);
+    }
+  })();
 };
 
 export const buyNow = async (productId, userId) => {
   return await db.transaction(async (trx) => {
-    const product = await trx('products').where('id', productId).first();
-    if (!product || product.is_sold !== null || !product.buy_now_price) throw new Error('Invalid product or buy now not available');
-    if (product.seller_id === userId) throw new Error('Seller cannot buy');
-    
+    const product = await trx('products')
+      .leftJoin('users as seller', 'products.seller_id', 'seller.id')
+      .where('products.id', productId)
+      .select('products.*', 'seller.fullname as seller_name')
+      .first();
+
+    if (!product) throw new Error('Product not found');
+    if (product.seller_id === userId) throw new Error('Seller cannot buy their own product');
+
     const now = new Date();
+    const endDate = new Date(product.end_at);
+    if (product.is_sold !== null) throw new Error('Product is no longer available');
+    if (endDate <= now || product.closed_at) throw new Error('Auction has already ended');
+    if (!product.buy_now_price) throw new Error('Buy Now option is not available for this product');
+
+    const isRejected = await trx('rejected_bidders').where({ product_id: productId, bidder_id: userId }).first();
+    if (isRejected) throw new Error('You have been rejected from bidding on this product');
+
+    if (!product.allow_unrated_bidder) {
+      const ratingPointObj = await reviewModel.calculateRatingPoint(userId);
+      const ratingPoint = ratingPointObj ? ratingPointObj.rating_point : 0;
+      if (ratingPoint === 0) throw new Error('This product does not allow bidders without ratings');
+    }
+
+    const buyNowPrice = parseFloat(product.buy_now_price);
     await trx('products').where('id', productId).update({
-      current_price: product.buy_now_price, highest_bidder_id: userId, highest_max_price: product.buy_now_price,
+      current_price: buyNowPrice, highest_bidder_id: userId, highest_max_price: buyNowPrice,
       end_at: now, closed_at: now, is_buy_now_purchase: true
     });
-    await trx('bidding_history').insert({ product_id: productId, bidder_id: userId, current_price: product.buy_now_price, is_buy_now: true });
+    await trx('bidding_history').insert({ product_id: productId, bidder_id: userId, current_price: buyNowPrice, is_buy_now: true });
     return { success: true };
   });
 };

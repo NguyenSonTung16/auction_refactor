@@ -169,24 +169,35 @@ export const getDetail = async (req, res) => {
 };
 
 export const postBid = async (req, res) => {
+  const { productId, bidAmount: rawBidAmount } = req.body;
   const userId = req.session.authUser.id;
-  const productId = parseInt(req.body.productId);
-  const bidAmount = parseFloat(req.body.bidAmount.replace(/,/g, ''));
-
   try {
+    const bidAmount = parseFloat(rawBidAmount.replace(/,/g, ''));
     const result = await biddingService.placeBid(productId, userId, bidAmount);
     
-    let message = result.message;
-    if (result.autoExtended) {
-      const extendedTimeStr = new Date(result.newEndTime).toLocaleString('vi-VN');
-      message += ` | Auction extended to ${extendedTimeStr}`;
+    let baseMessage = '';
+    if (result.productSold) {
+      if (result.newHighestBidderId === result.userId) {
+        baseMessage = `Congratulations! You won the product with Buy Now price: ${result.newCurrentPrice.toLocaleString()} VND. Please proceed to payment.`;
+      } else {
+        baseMessage = `Product has been sold to another bidder at Buy Now price: ${result.newCurrentPrice.toLocaleString()} VND. Your bid helped reach the Buy Now threshold.`;
+      }
+    } else if (result.newHighestBidderId === result.userId) {
+      baseMessage = `Bid placed successfully! Current price: ${result.newCurrentPrice.toLocaleString()} VND (Your max: ${result.bidAmount.toLocaleString()} VND)`;
+    } else {
+      baseMessage = `Bid placed! Another bidder is currently winning at ${result.newCurrentPrice.toLocaleString()} VND`;
     }
     
-    req.session.success_message = message;
+    if (result.autoExtended) {
+      const extendedTimeStr = new Date(result.newEndTime).toLocaleString('vi-VN');
+      baseMessage += ` | Auction extended to ${extendedTimeStr}`;
+    }
+    
+    req.session.success_message = baseMessage;
     res.redirect(`/products/detail?id=${productId}`);
   } catch (error) {
     console.error('Bid error:', error);
-    req.session.error_message = error.message || 'An error occurred while placing bid.';
+    req.session.error_message = error.message || 'An error occurred while placing bid. Please try again.';
     res.redirect(`/products/detail?id=${productId}`);
   }
 };
@@ -216,11 +227,77 @@ export const postComment = async (req, res) => {
       req.session.error_message = 'Comment cannot be empty';
       return res.redirect(`/products/detail?id=${productId}`);
     }
-    await productCommentModel.addComment({ product_id: productId, user_id: userId, content, parent_id: parentId || null });
+
+    await productCommentModel.createComment(productId, userId, content.trim(), parentId || null);
+
+    // Fire and forget email notifications
+    (async () => {
+      try {
+        const [product, commenter, seller] = await Promise.all([
+          productModel.findByProductId2(productId, null),
+          userModel.findById(userId),
+          null // will get seller later
+        ]);
+        const sellerInfo = await userModel.findById(product.seller_id);
+        const productUrl = `${req.protocol}://${req.get('host')}/products/detail?id=${productId}`;
+        const isSellerReplying = userId === product.seller_id;
+
+        if (isSellerReplying && parentId) {
+          const [bidders, commenters] = await Promise.all([
+            biddingHistoryModel.getUniqueBidders(productId),
+            productCommentModel.getUniqueCommenters(productId)
+          ]);
+          const recipientsMap = new Map();
+          [...bidders, ...commenters].forEach(u => {
+            if (u.id !== product.seller_id && u.email) recipientsMap.set(u.id, u);
+          });
+          for (const recipient of recipientsMap.values()) {
+            await sendMail({
+              to: recipient.email,
+              subject: `Seller answered a question on: ${product.name}`,
+              html: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #667eea;">Seller Response on Product</h2>
+                <p>Dear <strong>${recipient.fullname}</strong>,</p>
+                <p>The seller has responded to a question on a product you're interested in:</p>
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                  <p><strong>Product:</strong> ${product.name}</p>
+                  <p><strong>Seller:</strong> ${sellerInfo.fullname}</p>
+                  <p><strong>Answer:</strong></p>
+                  <p style="background-color: white; padding: 15px; border-radius: 5px; border-left: 4px solid #667eea;">${content}</p>
+                </div>
+                <div style="text-align: center; margin: 30px 0;">
+                  <a href="${productUrl}" style="display: inline-block; background-color: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">View Product</a>
+                </div>
+              </div>`
+            });
+          }
+        } else if (sellerInfo?.email && userId !== product.seller_id) {
+          const subject = parentId ? `New reply on your product: ${product.name}` : `New question about your product: ${product.name}`;
+          await sendMail({
+            to: sellerInfo.email,
+            subject,
+            html: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #667eea;">${parentId ? 'New Reply' : 'New Question'} About Your Product</h2>
+              <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                <p><strong>Product:</strong> ${product.name}</p>
+                <p><strong>From:</strong> ${commenter.fullname}</p>
+                <p><strong>${parentId ? 'Reply' : 'Question'}:</strong></p>
+                <p style="background-color: white; padding: 15px; border-radius: 5px;">${content}</p>
+              </div>
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${productUrl}" style="display: inline-block; background-color: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">View Product</a>
+              </div>
+            </div>`
+          });
+        }
+      } catch (err) { console.error('Comment email error:', err); }
+    })();
+
+    req.session.success_message = 'Comment posted successfully!';
     res.redirect(`/products/detail?id=${productId}`);
   } catch (error) {
     console.error('Comment error:', error);
-    req.session.error_message = 'An error occurred while posting comment.';
+    req.session.error_message = 'Failed to post comment. Please try again.';
     res.redirect(`/products/detail?id=${productId}`);
   }
 };
@@ -342,7 +419,11 @@ export const postBuyNow = async (req, res) => {
   const userId = req.session.authUser.id;
   try {
     const result = await biddingService.buyNow(productId, userId);
-    res.json({ success: true, redirectUrl: `/products/complete-order?id=${productId}` });
+    res.json({ 
+      success: true, 
+      message: 'Congratulations! You have successfully purchased the product at Buy Now price. Please proceed to payment.',
+      redirectUrl: `/products/complete-order?id=${productId}` 
+    });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
