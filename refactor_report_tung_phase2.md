@@ -15,7 +15,15 @@ Báo cáo này tổng hợp các cải tiến về mặt **KISS** (Keep It Simpl
 
 ---
 
-## 2. Giải pháp đề xuất & Đã triển khai
+## 2. Danh sách File thay đổi
+
+| Loại | File | Mô tả |
+| :--- | :--- | :--- |
+| **MODIFIED** | `src/models/product.model.js` | Làm sạch toàn bộ mã SQL lồng ghép, hợp nhất các hàm chi tiết. |
+
+---
+
+## 3. Giải pháp đề xuất & Đã triển khai
 
 ### **Tối ưu hóa nội bộ (KISS & DRY)**
 1.  **Trích xuất SQL Helpers nội bộ**:
@@ -29,7 +37,7 @@ Báo cáo này tổng hợp các cải tiến về mặt **KISS** (Keep It Simpl
 
 ---
 
-## 3. Minh chứng (Code trước và sau khi sửa)
+## 4. Minh chứng (Code trước và sau khi sửa)
 
 ### **Minh chứng 1: Loại bỏ mã SQL lặp lại (DRY)**
 

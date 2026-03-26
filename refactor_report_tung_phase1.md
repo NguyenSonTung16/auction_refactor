@@ -15,7 +15,19 @@ Báo cáo này tổng hợp các lỗi vi phạm, giải pháp đã triển khai
 
 ---
 
-## 2. Giải pháp đề xuất & Đã triển khai
+## 2. Danh sách File thay đổi/thêm mới
+
+| Loại | File | Mô tả |
+| :--- | :--- | :--- |
+| **MODIFIED** | `src/routes/product.route.js` | Loại bỏ logic nghiệp vụ, chuyển sang gọi Controller. |
+| **NEW** | `src/controllers/product.controller.js` | Điều hướng Request/Response cho các tính năng liên quan đến sản phẩm. |
+| **NEW** | `src/services/product.service.js` | Chứa logic chung về sản phẩm (kiểm tra trạng thái, định dạng kết quả). |
+| **NEW** | `src/services/bidding.service.js` | Điều phối quy trình đấu giá (Transaction, email, thông tin đấu giá). |
+| **NEW** | `src/strategies/bidding/` | Thư mục chứa các Strategy đấu giá (`Normal`, `Auto`, `BuyNow`) và `Factory`. |
+
+---
+
+## 3. Giải pháp đề xuất & Đã triển khai
 
 ### **Kiến trúc mới: Controller-Service-Strategy**
 1.  **Chuyển đổi sang Controller-Service (SRP)**:
@@ -29,7 +41,7 @@ Báo cáo này tổng hợp các lỗi vi phạm, giải pháp đã triển khai
 
 ---
 
-## 3. Minh chứng (Code trước và sau khi sửa)
+## 4. Minh chứng (Code trước và sau khi sửa)
 
 ### **Minh chứng 1: Rút gọn Route Handler (SRP)**
 
