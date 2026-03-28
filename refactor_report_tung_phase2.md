@@ -110,5 +110,29 @@ export const findByProductId2 = getById;
 
 ---
 
-## 4. Kết luận
+## 5. Bổ sung: Refactoring If-Else trong Model & Scripts 
+chuyển đổi các khối `if-else` phức tạp thành các hàm/helper tái sử dụng:
+
+### **Minh chứng 3: Centralized Status Mapping (DRY)**
+Trong `product.model.js`, logic SQL `CASE WHEN` để xác định trạng thái sản phẩm (Sold, Pending, Active...) được gom vào helper `statusCaseSql`.
+
+**Sau:**
+```javascript
+const statusCaseSql = () => db.raw(`
+  CASE
+    WHEN is_sold IS TRUE THEN 'Sold'
+    ...
+  END AS status
+`);
+
+// Sử dụng tại findAllProductsBySellerId
+.select('products.*', bidCountSubquery(), statusCaseSql())
+```
+
+### **Minh chứng 4: Tách biệt logic xử lý File (KISS)**
+Trong `invoice.model.js`, hàm `moveUploadedFiles` được chia nhỏ thành `processSingleFile` để dễ bảo trì và đọc hiểu.
+
+---
+
+## 6. Kết luận
 Việc refactor Phase 2 đã giúp file `product.model.js` giảm đáng kể số lượng dòng code (khoảng 200 dòng code dư thừa đã bị loại bỏ), đồng thời tăng tính nhất quán của dữ liệu trả về. Cấu trúc hiện tại cực kỳ đơn giản (**KISS**) nhưng vẫn đảm bảo tính linh hoạt khi cần mở rộng thêm các trường thông tin mới trong tương lai.

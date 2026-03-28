@@ -19,6 +19,34 @@ const joinWatchlist = (query, userId) => query.leftJoin('watchlists', function()
       .andOnVal('watchlists.user_id', '=', userId || -1);
 });
 
+const applySorting = (query, sort, defaultSort = 'newest') => {
+  const sortOption = sort || defaultSort;
+  switch (sortOption) {
+    case 'price_asc':
+      return query.orderBy('products.current_price', 'asc');
+    case 'price_desc':
+      return query.orderBy('products.current_price', 'desc');
+    case 'newest':
+      return query.orderBy('products.created_at', 'desc');
+    case 'oldest':
+      return query.orderBy('products.created_at', 'asc');
+    case 'ending_soon':
+      return query.orderBy('products.end_at', 'asc');
+    default:
+      return query.orderBy('products.created_at', 'desc');
+  }
+};
+
+const statusCaseSql = () => db.raw(`
+  CASE
+    WHEN is_sold IS TRUE THEN 'Sold'
+    WHEN is_sold IS FALSE THEN 'Cancelled'
+    WHEN (end_at <= NOW() OR closed_at IS NOT NULL) AND highest_bidder_id IS NOT NULL AND is_sold IS NULL THEN 'Pending'
+    WHEN end_at <= NOW() AND highest_bidder_id IS NULL THEN 'No Bidders'
+    WHEN end_at > NOW() AND closed_at IS NULL THEN 'Active'
+  END AS status
+`);
+
 const formatProductRecord = (rows) => {
   if (!rows || rows.length === 0) return null;
   const product = rows[0];
@@ -101,18 +129,9 @@ export function searchPageByKeywords(keywords, limit, offset, userId, logic = 'o
     );
 
   // Apply sorting
-  if (sort === 'price_asc') {
-    query = query.orderBy('products.current_price', 'asc');
-  } else if (sort === 'price_desc') {
-    query = query.orderBy('products.current_price', 'desc');
-  } else if (sort === 'newest') {
-    query = query.orderBy('products.created_at', 'desc');
-  } else if (sort === 'oldest') {
-    query = query.orderBy('products.created_at', 'asc');
-  } else {
-    // Default: sort by end_at ascending (ending soonest first)
-    query = query.orderBy('products.end_at', 'asc');
-  }
+  query = applySorting(query, sort, 'ending_soon');
+
+  return query.limit(limit).offset(offset);
 
   return query.limit(limit).offset(offset);
 }
@@ -458,15 +477,7 @@ export function findAllProductsBySellerId(sellerId) {
     .select(
       'products.*', 'categories.name as category_name',
       bidCountSubquery(),
-      db.raw(`
-        CASE
-          WHEN is_sold IS TRUE THEN 'Sold'
-          WHEN is_sold IS FALSE THEN 'Cancelled'
-          WHEN (end_at <= NOW() OR closed_at IS NOT NULL) AND highest_bidder_id IS NOT NULL AND is_sold IS NULL THEN 'Pending'
-          WHEN end_at <= NOW() AND highest_bidder_id IS NULL THEN 'No Bidders'
-          WHEN end_at > NOW() AND closed_at IS NULL THEN 'Active'
-        END AS status
-      `)
+      statusCaseSql()
     );
 }
 

@@ -101,3 +101,10 @@ const strategyResult = await strategy.calculate(product, userId, bidAmount, trx)
 
 ---
 
+### **Minh chứng 3: Tách biệt Email Templates (Decoupling)**
+Trong `auctionEndNotifier.js`, các mẫu email HTML cồng kềnh đã được tách ra thành các hàm helper (`getWinnerEmailTemplate`, `getSellerWinnerEmailTemplate`, ...), giúp logic chính của script trở nên ngắn gọn.
+
+---
+
+## 5. Kết luận
+Quá trình refactor Phân đoạn 1 đã giải quyết triệt để vấn đề "Fat Route", đưa logic nghiệp vụ về đúng nơi quy định và tạo ra một nền tảng code dễ dàng mở rộng (**OCP**) thông qua các Strategy.
