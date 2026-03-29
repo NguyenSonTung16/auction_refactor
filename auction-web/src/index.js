@@ -1,14 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
-import  setUpViewEngine from './config/viewEngine.js';
+import setUpViewEngine from './config/viewEngine.js';
 import session from 'express-session';
 import methodOverride from 'method-override';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import passport from './utils/passport.js';
-
+import { errorHandler } from './errorHandlers.js/errorHandler.js';
 // Import Scheduled Jobs
 import { startAuctionEndNotifier } from './scripts/auctionEndNotifier.js';
 
@@ -54,7 +53,7 @@ app.use(passport.session());
 // ============================================================
 setUpViewEngine(app);
 
-// File filter (chỉ cho phép ảnh)
+// File filter (chỉ cho phép ảnh) 
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|webp/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -98,6 +97,8 @@ app.get('/api/categories', getCategorySearchModal);
 app.use('/', homeRouter);
 app.use('/products', productRouter);
 app.use('/account', accountRouter);
+// global error handler
+app.use(errorHandler);
 
 app.listen(PORT, function () {
   console.log(`Server is running on http://localhost:${PORT}`);
