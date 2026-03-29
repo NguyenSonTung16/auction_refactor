@@ -1,0 +1,15 @@
+# Bỏ qua Node Modules ở bất kỳ đâu trong dự án
+node_modules/
+
+# Bỏ qua file cấu hình môi trường (Cực kỳ quan trọng để bảo mật)
+.env
+.env.*
+
+# Bỏ qua các file log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Bỏ qua các file cấu hình của hệ điều hành
+.DS_Store
+Thumbs.db
